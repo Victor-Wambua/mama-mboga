@@ -1,0 +1,10 @@
+parameters:
+    level: 8
+    paths:
+        - src
+        - tests
+        - config
+        - public
+        - bin
+    excludePaths:
+        - tests/Fixtures
