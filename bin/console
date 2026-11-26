@@ -1,0 +1,114 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+$root = dirname(__DIR__);
+require $root . '/vendor/autoload.php';
+
+use MamaMboga\App;
+use MamaMboga\Application\Seed\DemoSeeder;
+use MamaMboga\Domain\Parsing\OrderMessageParser;
+use MamaMboga\Infrastructure\Config\Config;
+use MamaMboga\Infrastructure\Persistence\Database;
+use MamaMboga\Infrastructure\Persistence\Migrator;
+use MamaMboga\Tests\Support\ParserCaseRunner;
+
+$command = $argv[1] ?? 'help';
+$envFile = $root . '/.env';
+
+/** Create .env from the example and give it a random APP_KEY. */
+$ensureEnv = static function () use ($root, $envFile): void {
+    if (!is_file($envFile)) {
+        $example = file_get_contents($root . '/.env.example');
+        copy($root . '/.env.example', $envFile);
+        echo "Created .env\n";
+        unset($example);
+    }
+    $contents = (string) file_get_contents($envFile);
+    if (preg_match('/^APP_KEY=(.*)$/m', $contents, $m) === 1 && (trim($m[1]) === '' || trim($m[1]) === Config::PLACEHOLDER_KEY)) {
+        file_put_contents($envFile, preg_replace('/^APP_KEY=.*$/m', 'APP_KEY=' . bin2hex(random_bytes(32)), $contents));
+        echo "Generated APP_KEY\n";
+    }
+};
+
+$boot = static function () use ($root, $envFile) {
+    $env = Config::readEnvFile($envFile) + array_map('strval', array_filter(getenv(), 'is_string'));
+    $config = Config::fromEnv($env, $root);
+    date_default_timezone_set($config->timezone);
+
+    return [$config, App::container($config)];
+};
+
+switch ($command) {
+    case 'setup':
+        $ensureEnv();
+        [, $container] = $boot();
+        $applied = $container->get(Migrator::class)->migrate();
+        echo $applied === [] ? "Database is up to date.\n" : 'Applied: ' . implode(', ', $applied) . "\n";
+        echo "Next: composer seed (demo shop) then composer serve\n";
+        break;
+
+    case 'migrate':
+        [, $container] = $boot();
+        $applied = $container->get(Migrator::class)->migrate();
+        echo $applied === [] ? "Nothing to migrate.\n" : 'Applied: ' . implode(', ', $applied) . "\n";
+        break;
+
+    case 'seed':
+        $ensureEnv();
+        [$config, $container] = $boot();
+        if ($config->dbPath !== ':memory:' && is_file($config->dbPath)) {
+            // Start from a clean database: the demo shop replaces whatever was there.
+            foreach ([$config->dbPath, $config->dbPath . '-wal', $config->dbPath . '-shm'] as $file) {
+                if (is_file($file)) {
+                    unlink($file);
+                }
+            }
+            [$config, $container] = $boot();
+        }
+        $container->get(Migrator::class)->migrate();
+        $counts = $container->get(DemoSeeder::class)->seed();
+        printf("Seeded Mama Njeri Greens: %d items, %d customers, %d orders, %d ledger entries.\n", $counts['items'], $counts['customers'], $counts['orders'], $counts['ledger']);
+        printf("Owner console PIN (demo data only): %s\n", DemoSeeder::DEMO_PIN);
+        echo "Next: composer serve, then open http://127.0.0.1:8080\n";
+        break;
+
+    case 'owner:pin':
+        [, $container] = $boot();
+        $pin = $argv[2] ?? '';
+        if (strlen($pin) < 6) {
+            fwrite(STDERR, "Usage: php bin/console owner:pin <6+ characters>\n");
+            exit(1);
+        }
+        $container->get(\MamaMboga\Application\Port\SettingsRepository::class)->set('owner_pin_hash', password_hash($pin, PASSWORD_DEFAULT));
+        echo "Owner PIN updated.\n";
+        break;
+
+    case 'parser:accuracy':
+        $total = 0;
+        $passed = 0;
+        foreach (['tuned' => 'Batch A (written while tuning)', 'fresh' => 'Batch B (written afterwards)'] as $name => $label) {
+            $cases = ParserCaseRunner::load($name);
+            $ok = 0;
+            $lines = 0;
+            $linesOk = 0;
+            foreach ($cases as $case) {
+                $result = ParserCaseRunner::check($case[1], $case[2], $case[3] ?? []);
+                $ok += $result['ok'] ? 1 : 0;
+                $lines += count($case[2]);
+                $linesOk += count(array_intersect($case[2], $result['got']));
+                if (!$result['ok']) {
+                    printf("  FAIL %s\n    wanted %s\n    got    %s\n", $case[0], json_encode($case[2]), json_encode($result['got']));
+                }
+            }
+            printf("%-34s %3d/%-3d cases exact (%.1f%%), %d/%d expected lines produced\n", $label, $ok, count($cases), 100 * $ok / max(1, count($cases)), $linesOk, $lines);
+            $total += count($cases);
+            $passed += $ok;
+        }
+        printf("%-34s %3d/%-3d cases exact (%.1f%%)\n", 'Both batches', $passed, $total, 100 * $passed / max(1, $total));
+        exit($passed === $total ? 0 : 1);
+
+    default:
+        echo "Mama Mboga console\n\n  setup            create .env, generate APP_KEY, run migrations\n  migrate          run pending migrations\n  seed             reset the database and load the demo shop\n  owner:pin <pin>  set the owner console PIN or password\n  parser:accuracy  score the WhatsApp parser on the case tables\n";
+}
