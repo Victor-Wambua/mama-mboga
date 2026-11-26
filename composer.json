@@ -24,7 +24,10 @@
     "config": {
         "optimize-autoloader": true,
         "sort-packages": true,
-        "process-timeout": 0
+        "process-timeout": 0,
+        "platform": {
+            "php": "8.3.0"
+        }
     },
     "scripts": {
         "setup": "@php bin/console setup",
