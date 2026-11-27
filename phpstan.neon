@@ -6,5 +6,6 @@ parameters:
         - config
         - public
         - bin
+        - demo/php
     excludePaths:
         - tests/Fixtures

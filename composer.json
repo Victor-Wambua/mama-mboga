@@ -19,7 +19,7 @@
         "psr-4": { "MamaMboga\\": "src/" }
     },
     "autoload-dev": {
-        "psr-4": { "MamaMboga\\Tests\\": "tests/" }
+        "psr-4": { "MamaMboga\\Tests\\": "tests/", "MamaMboga\\Demo\\": "demo/php/" }
     },
     "config": {
         "optimize-autoloader": true,
