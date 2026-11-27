@@ -1,6 +1,9 @@
 # Mama Mboga
 
 **Daily-price ordering for neighbourhood greengrocers, built in framework-free PHP 8.**
+
+**Live demo: <https://victor-wambua.github.io/mama-mboga/>** (static, runs the real PHP code in your browser on invented data).
+
 The owner sets the day's prices, customers order from their phones, WhatsApp orders are read into drafts, and the credit book ("deni") never loses a shilling.
 
 [![CI](https://github.com/Victor-Wambua/mama-mboga/actions/workflows/ci.yml/badge.svg)](https://github.com/Victor-Wambua/mama-mboga/actions/workflows/ci.yml)
@@ -11,7 +14,7 @@ The owner sets the day's prices, customers order from their phones, WhatsApp ord
 
 ![Mama Mboga: owner console and customer menu](docs/screenshots/hero.png)
 
-> **Status: portfolio build, runs locally with sample data.** "Mama Njeri Greens" is a made-up shop; every customer, phone number and order is synthetic. No payment provider and no WhatsApp API is connected (see [limits](#status-and-roadmap)). There is no hosted demo because the app needs PHP.
+> **Status: portfolio build, runs locally with sample data.** "Mama Njeri Greens" is a made-up shop; every customer, phone number and order is synthetic. No payment provider and no WhatsApp API is connected (see [limits](#status-and-roadmap)). The full app needs PHP, so the hosted page is a [browser demo](#live-demo) of the owner console that runs the real code under WebAssembly.
 
 ## The problem
 
@@ -34,6 +37,22 @@ A neighbourhood greengrocer's trade runs on three things: WhatsApp messages ("su
 | Market shopping list | Dark mode | Deni ledger |
 | --- | --- | --- |
 | ![market list](docs/screenshots/market-list-phone.png) | ![dark](docs/screenshots/owner-orders-dark-phone.png) | ![ledger](docs/screenshots/deni-ledger-desktop.png) |
+
+## Live demo
+
+<https://victor-wambua.github.io/mama-mboga/> is a static page on GitHub Pages. It runs this repository's own PHP (services, WhatsApp parser, ledger, SQLite repositories, migrations, demo seeder) unchanged under PHP 8.3 compiled to WebAssembly, in a web worker. Nothing is a port or a recording.
+
+- **Real:** price board, order placing with stock and credit checks, the WhatsApp message reader and its flags, the market list, the deni ledger and its rules, the reminder messages, and the SQLite database with its append-only triggers.
+- **Replaced:** the HTTP layer, sessions, PIN login, CSRF and page templates. The page is a separate front end in `demo/web/` that calls the services through `demo/php/Bridge.php`. The shop clock is fixed at 06:30 on today's date so delivery slots stay open.
+- **Not shown:** the customer menu and checkout, run sheet, takings, settings, signed statement links and the installable app.
+- **State:** the database lives in browser memory, a copy is kept in IndexedDB, and Reset restores the sample shop. Nothing is sent anywhere. The PHP runtime is about 18 MB unpacked, about 7 MB over the network, and is cached for offline use after the first visit.
+- **Checks:** `tests/Demo/BridgeTest.php` runs the bridge on native PHP in PHPUnit, and a Playwright smoke test (`cd demo && npm ci && npm run build && npm test`) drives the built page in Chromium in CI.
+
+| Read a WhatsApp order | Deni book | Market list (phone, dark) |
+| --- | --- | --- |
+| ![read order](docs/screenshots/demo-read-order.png) | ![deni](docs/screenshots/demo-deni.png) | ![market list](docs/screenshots/demo-market-phone-dark.png) |
+
+The PHP-WASM runtime comes from the WordPress Playground project under its own licences, see `demo/THIRD-PARTY-NOTICES.txt`.
 
 ## Quick start
 
@@ -94,7 +113,7 @@ composer accuracy   # score the WhatsApp parser on its case tables
 composer check      # all of the above except accuracy
 ```
 
-Real numbers from the last run: **441 tests, 864 assertions, all passing** on PHP 8.4 and PHP 8.3; PHPStan level 8 reports no errors; the code style check is clean. CI runs the same on 8.3 and 8.4, then seeds the demo and requests the home page. Tests run offline against in-memory SQLite and a frozen clock. Coverage is not measured.
+Real numbers from the last run: **451 tests, 954 assertions, all passing** on PHP 8.4 and PHP 8.3; PHPStan level 8 reports no errors; the code style check is clean. CI runs the same on 8.3 and 8.4, then seeds the demo and requests the home page. Tests run offline against in-memory SQLite and a frozen clock. Coverage is not measured.
 
 | Area | Tests | What is covered |
 | --- | ---: | --- |
@@ -103,6 +122,7 @@ Real numbers from the last run: **441 tests, 864 assertions, all passing** on PH
 | Ledger, slots, takings, shopping list, orders | 52 | overpay, credit limit, duplicate receipts, one charge per order, FIFO aging, capacity, cut-off |
 | Application services | 51 | stock reservation, last-item race, slot capacity, deni limit, cancel restores stock, WhatsApp links |
 | Router, container, middleware, sessions, DB | 51 | route params, 404/405, circular DI, CSRF, rate limit, session fixation, migration rollback, append-only triggers |
+| Browser demo bridge (native PHP) | 10 | seeded shop, price edits, parser flags, quotes, order to market list, deni rules, reminders |
 | HTTP feature tests (in-process) | 48 | order flow, auth on every owner route, XSS, signed links, expiry, 100 KB budget |
 
 ### Parser accuracy (read this before trusting the number)
@@ -158,7 +178,7 @@ Working: everything listed above, on a single shop with sample data. Not done, o
 - **Rate limiting trusts `REMOTE_ADDR`.** Behind a proxy, set it up to pass the real client address.
 - **The parser is rule-based and tuned on my own examples.** It has not seen real customers' messages.
 
-Next steps: a Daraja callback that settles deni automatically, a customer "reorder last basket" button, stock-in from the market list ("bought" adds to stock), per-customer price lists, and a Playwright smoke test in CI.
+Next steps: a Daraja callback that settles deni automatically, a customer "reorder last basket" button, stock-in from the market list ("bought" adds to stock), and per-customer price lists.
 
 ---
 

@@ -1,0 +1,17 @@
+Third-party software shipped with the Mama Mboga browser demo
+=============================================================
+
+The demo runs the repository's own PHP code in your browser. To do that it ships a
+WebAssembly build of PHP. That build is not part of this repository's source code and
+is not covered by its MIT licence.
+
+PHP 8.3 compiled to WebAssembly
+  Package:  @php-wasm/web-8-3 and @php-wasm/universal, version 3.1.54
+  Origin:   the WordPress Playground project, https://github.com/WordPress/wordpress-playground
+  Licence:  GPL-2.0-or-later for the packages (full text in LICENSE-php-wasm.txt)
+  Contains: PHP (PHP License 3.01, https://www.php.net/license/3_01.txt), SQLite (public domain),
+            and the other libraries compiled into that build, each under its own licence.
+
+Source for the build is available from the project above. The demo does not modify it.
+
+Mama Mboga itself is MIT licensed, see the LICENSE file in the repository root.

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mama Mboga demo</title>
+<meta name="description" content="Static demo of Mama Mboga, a daily-price ordering app for neighbourhood greengrocers. The real PHP code runs in your browser on invented data.">
+<meta name="theme-color" content="#1d5e3a">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="app.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="banner">
+  <div class="wrap">
+    <p><strong>Static demo.</strong> Runs in your browser on invented data; nothing is sent anywhere. The real project is a PHP 8 web app with a SQLite database: <a href="https://github.com/Victor-Wambua/mama-mboga">repository</a> and <a href="https://github.com/Victor-Wambua/mama-mboga#readme">README</a>.</p>
+  </div>
+</div>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#/start">Mama Njeri Greens<small>owner console, demo</small></a>
+    <nav aria-label="Demo sections">
+      <ul id="nav"></ul>
+    </nav>
+  </div>
+</header>
+<div id="flash" role="status" aria-live="polite"></div>
+<main id="main" class="wrap" tabindex="-1">
+  <div class="loading"><h1>Starting the shop</h1><p>PHP is loading in your browser. The first visit downloads about 7 MB; later visits use your browser's copy.</p></div>
+</main>
+<footer>
+  <div class="wrap">
+    <p>Mama Njeri Greens, every customer, phone number and order here is made up. Your changes stay in this browser only.</p>
+    <p>Made by Victor Wambua. <a href="THIRD-PARTY-NOTICES.txt">Third-party notices</a>.</p>
+  </div>
+</footer>
+<dialog id="confirm" aria-labelledby="confirm-title">
+  <form method="dialog">
+    <h2 id="confirm-title">Reset the demo?</h2>
+    <p>This throws away your changes and loads the starting data again.</p>
+    <div class="actions">
+      <button class="btn danger" value="reset">Reset the demo</button>
+      <button class="btn quiet" value="cancel" autofocus>Keep my changes</button>
+    </div>
+  </form>
+</dialog>
+<noscript><p class="wrap">This demo needs JavaScript and WebAssembly to run the PHP code in your browser.</p></noscript>
+</body>
+</html>
