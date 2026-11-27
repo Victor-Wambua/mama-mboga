@@ -92,7 +92,14 @@ async function call(action, args) {
   return result;
 }
 
-self.onmessage = async ({ data }) => {
+// PHP handles one request at a time: queue calls so two actions never overlap on the same runtime and database.
+let queue = Promise.resolve();
+
+self.onmessage = ({ data }) => {
+  queue = queue.then(() => handle(data), () => handle(data));
+};
+
+async function handle(data) {
   const { id, action, args } = data;
   try {
     if (action === 'init') {
@@ -113,4 +120,4 @@ self.onmessage = async ({ data }) => {
   } catch (error) {
     self.postMessage({ id, error: String(error && error.message ? error.message : error) });
   }
-};
+}

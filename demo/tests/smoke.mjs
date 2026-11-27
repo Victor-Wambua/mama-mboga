@@ -31,7 +31,16 @@ const problems = [];
 page.on('pageerror', (e) => problems.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error') problems.push(m.text()); });
 
-const step = async (name, fn) => { await fn(); console.log('ok  ' + name); };
+const step = async (name, fn) => {
+  try {
+    await fn();
+  } catch (error) {
+    console.log('FAILED  ' + name + '\n' + (await page.locator('main').innerText().catch(() => '')).slice(0, 1500));
+    console.log(JSON.stringify(await page.evaluate(() => [0, 1, 2, 3].map((i) => [document.querySelector('#ln-' + i + '-amount')?.textContent, document.querySelector('#ln-' + i + '-entry')?.value, document.querySelector('#ln-' + i + '-qty')?.value, document.querySelector('#ln-' + i + '-problem')?.textContent])).catch(() => null)));
+    throw error;
+  }
+  console.log('ok  ' + name);
+};
 const go = async (view) => { await page.goto(`${base}#/${view}`); await page.waitForSelector('main h1'); };
 
 await page.goto(base);
@@ -60,6 +69,7 @@ await step('price board comes from the seeded SQLite database and can be changed
 await step('ambiguous and unknown items are flagged, never guessed', async () => {
   await go('messages');
   await page.click('button[data-act="sample"][data-i="2"]');
+  await page.locator('#draft', { hasText: 'viazi 2 kg' }).waitFor();
   await page.waitForSelector('#draft-total');
   assert.match(await page.locator('#draft-summary').innerText(), /2 to check/);
   const flagged = page.locator('tr.is-flag');
@@ -67,6 +77,7 @@ await step('ambiguous and unknown items are flagged, never guessed', async () =>
   assert.match(await flagged.first().innerText(), /More than one item fits/);
   await go('messages');
   await page.click('button[data-act="sample"][data-i="3"]');
+  await page.locator('#draft', { hasText: 'maziwa' }).waitFor();
   await page.waitForSelector('#draft-total');
   assert.match(await page.locator('#draft').innerText(), /maziwa/);
   assert.match(await page.locator('#draft').innerText(), /Nothing on today's list fits/);
@@ -80,6 +91,7 @@ const pick = async (selector, text) => {
 await step('resolving a flagged line updates the price, the order saves and reaches the market list', async () => {
   await go('messages');
   await page.click('button[data-act="sample"][data-i="2"]');
+  await page.locator('#draft', { hasText: 'viazi 2 kg' }).waitFor();
   await page.waitForSelector('#draft-total');
   const before = await page.locator('#draft-total').textContent();
   await pick('#ln-0-entry', 'Irish potatoes');
@@ -121,6 +133,7 @@ await step('delivering a deni order charges the ledger', async () => {
   };
   await go('messages');
   await page.click('button[data-act="sample"][data-i="1"]');
+  await page.locator('#draft', { hasText: 'nyanya kg 1.5' }).waitFor();
   await page.waitForSelector('#draft-total');
   await pick('#c-known', 'Wanjiru Kamau');
   await page.check('#c-fulfilment-pickup');
