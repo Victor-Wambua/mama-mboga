@@ -814,25 +814,25 @@ document.addEventListener('submit', async (ev) => {
   if (kind === 'order') { await saveOrder(form); return; }
 
   const spec = {
-    entry: () => ['setEntry', { itemId: form.dataset.item, unit: v.unit, price: v.price, available: v.available, special: form.elements.special.checked, note: v.note }, () => flash(`Saved ${$('strong', form).textContent}.`)],
-    add: () => ['addToBoard', { itemId: v.itemId, price: v.price, available: v.available }, () => flash('Added to today\'s list.')],
-    newitem: () => ['saveItem', { nameEn: v.name_en, nameSw: v.name_sw, aliases: v.aliases, unit: v.unit }, () => flash('Product saved. Add it to today\'s list with a price.')],
-    customer: () => ['addCustomer', v, () => flash('Customer added.')],
-    payment: () => ['payment', { ...v, customerId: form.dataset.customer }, () => flash('Payment recorded.')],
-    charge: () => ['charge', { ...v, customerId: form.dataset.customer }, () => flash('Charge added.')],
-    creditnote: () => ['creditNote', { ...v, customerId: form.dataset.customer }, () => flash('Credit note added.')],
-    limit: () => ['setLimit', { ...v, customerId: form.dataset.customer }, () => flash('Credit limit saved.')],
+    entry: () => ['setEntry', { itemId: form.dataset.item, unit: v.unit, price: v.price, available: v.available, special: form.elements.special.checked, note: v.note }, `Saved ${$('strong', form).textContent}.`],
+    add: () => ['addToBoard', { itemId: v.itemId, price: v.price, available: v.available }, 'Added to today\'s list.'],
+    newitem: () => ['saveItem', { nameEn: v.name_en, nameSw: v.name_sw, aliases: v.aliases, unit: v.unit }, 'Product saved. Add it to today\'s list with a price.'],
+    customer: () => ['addCustomer', v, 'Customer added.'],
+    payment: () => ['payment', { ...v, customerId: form.dataset.customer }, 'Payment recorded.'],
+    charge: () => ['charge', { ...v, customerId: form.dataset.customer }, 'Charge added.'],
+    creditnote: () => ['creditNote', { ...v, customerId: form.dataset.customer }, 'Credit note added.'],
+    limit: () => ['setLimit', { ...v, customerId: form.dataset.customer }, 'Credit limit saved.'],
   }[kind];
   if (!spec) return;
-  const [action, args, ok] = spec();
+  const [action, args, message] = spec();
   const r = await call(action, args);
   if (!r.ok) {
     showErrors(form, r.errors, r.message);
     return;
   }
-  ok();
   if (S.view === 'deni' && S.param) await show({ focusHeading: false });
   else render();
+  flash(message);
 });
 
 $('#confirm').addEventListener('close', async () => {
