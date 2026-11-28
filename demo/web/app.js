@@ -749,11 +749,14 @@ async function applyPayment(prompt, payment) {
 
 async function refreshCustomer() {
   if (!(S.view === 'deni' && S.param)) return;
+  const id = Number(S.param);
   const snap = await call('snapshot');
   if (snap.ok) S.snap = snap.data;
-  const r = await call('customer', { customerId: Number(S.param) });
+  const r = await call('customer', { customerId: id });
+  const rem = await call('reminder', { customerId: id, lang: S.lang });
+  // The owner may have moved to another page while PHP was answering: keep the fresh data, but only redraw the page that asked.
+  if (S.view !== 'deni' || Number(S.param) !== id) return;
   if (r.ok) S.detail = r.data;
-  const rem = await call('reminder', { customerId: Number(S.param), lang: S.lang });
   if (rem.ok) S.reminder = rem.data.text;
   render();
 }
@@ -1097,7 +1100,7 @@ document.addEventListener('submit', async (ev) => {
   if (kind === 'collect') { await submitCollect(form); return; }
   if (kind === 'collect-review') {
     const r = await call('collectReview', { requestId: form.dataset.id, note: v.note || '' });
-    if (r.ok) { flash('Marked as looked at. The book was not changed.'); await refreshCustomer(); } else showErrors(form, r.errors, r.message);
+    if (r.ok) { await refreshCustomer(); flash('Marked as looked at. The book was not changed.'); } else showErrors(form, r.errors, r.message);
     return;
   }
 
