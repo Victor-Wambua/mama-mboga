@@ -3,6 +3,17 @@
   <div><h1>Deni book</h1><p class="muted">Who owes what, and how old it is.</p></div>
   <div class="kpi hi"><b class="num"><?= $money($outstanding->amount) ?></b><span>Owed in total</span></div>
 </div>
+<?php if ($needsYou !== []): ?>
+<section class="card stack" aria-labelledby="needs-h">
+  <h2 id="needs-h">Prompt payments that need you</h2>
+  <p class="muted">The gateway is not sure about these, so none has been written in the book. Open the customer, check M-Pesa, and record it by hand if the money arrived.</p>
+  <ul class="plain">
+<?php foreach ($needsYou as $item): $p = $item['request']; $d = $p->display(); ?>
+    <li><a href="/owner/deni/<?= $e($p->customerId) ?>"><strong><?= $e($item['customer']?->name ?? 'Customer') ?></strong></a>, KSh <?= $e($p->amount) ?>, <span class="num"><?= $e($p->reference) ?></span><br><span class="small"><?= $e($d['detail']) ?></span></li>
+<?php endforeach; ?>
+  </ul>
+</section>
+<?php endif; ?>
 <?php if ($rows === []): ?>
 <section class="card empty"><h2>No credit customers yet</h2><p class="muted">Add a regular customer below and give them a credit limit.</p></section>
 <?php else: ?>

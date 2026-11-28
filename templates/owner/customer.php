@@ -18,6 +18,8 @@
 </section>
 <?php endif; ?>
 
+<?= $partial('partials/prompts', ['customer' => $customer, 'balance' => $balance, 'prompts' => $prompts, 'collectEnabled' => $collectEnabled]) ?>
+
 <section class="card stack">
   <h2>Record a payment</h2>
   <form method="post" action="/owner/deni/<?= $e($customer->id) ?>/payment" class="stack">

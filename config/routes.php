@@ -56,6 +56,9 @@ return static function (Router $r): void {
         $r->post('/deni/customers', [OwnerDeniController::class, 'addCustomer']);
         $r->get('/deni/{id:\d+}', [OwnerDeniController::class, 'show']);
         $r->post('/deni/{id:\d+}/payment', [OwnerDeniController::class, 'payment']);
+        $r->post('/deni/{id:\d+}/collect', [OwnerDeniController::class, 'collect']);
+        $r->post('/deni/prompts/{rid:\d+}/check', [OwnerDeniController::class, 'checkPrompt']);
+        $r->post('/deni/prompts/{rid:\d+}/review', [OwnerDeniController::class, 'reviewPrompt']);
         $r->post('/deni/{id:\d+}/charge', [OwnerDeniController::class, 'charge']);
         $r->post('/deni/{id:\d+}/credit-note', [OwnerDeniController::class, 'creditNote']);
         $r->post('/deni/{id:\d+}/limit', [OwnerDeniController::class, 'limit']);

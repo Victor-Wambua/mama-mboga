@@ -85,6 +85,22 @@ switch ($command) {
         echo "Owner PIN updated.\n";
         break;
 
+    case 'gateway:reconcile':
+        // Ask the gateway about every prompt still waiting, and record the ones it says succeeded. Safe to run from cron.
+        [, $container] = $boot();
+        $service = $container->get(\MamaMboga\Application\Service\PaymentCollectionService::class);
+        if (!$service->enabled()) {
+            fwrite(STDERR, "Set GATEWAY_URL and GATEWAY_SECRET_KEY first.\n");
+            exit(1);
+        }
+        $results = $service->reconcileOpen();
+        foreach ($results as $request) {
+            $d = $request->display();
+            printf("%s  KSh %d  %s\n", $request->reference, $request->amount, $d['label']);
+        }
+        printf("%d prompt(s) checked, %d need the owner.\n", count($results), count(array_filter($results, static fn ($r): bool => $r->needsOwner())));
+        break;
+
     case 'parser:accuracy':
         $total = 0;
         $passed = 0;
@@ -110,5 +126,5 @@ switch ($command) {
         exit($passed === $total ? 0 : 1);
 
     default:
-        echo "Mama Mboga console\n\n  setup            create .env, generate APP_KEY, run migrations\n  migrate          run pending migrations\n  seed             reset the database and load the demo shop\n  owner:pin <pin>  set the owner console PIN or password\n  parser:accuracy  score the WhatsApp parser on the case tables\n";
+        echo "Mama Mboga console\n\n  setup            create .env, generate APP_KEY, run migrations\n  migrate          run pending migrations\n  seed             reset the database and load the demo shop\n  owner:pin <pin>  set the owner console PIN or password\n  parser:accuracy  score the WhatsApp parser on the case tables\n  gateway:reconcile  check waiting M-Pesa prompts with the gateway and record the ones that succeeded\n";
 }

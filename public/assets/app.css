@@ -191,3 +191,11 @@ main > .flash + .flash { margin-top: 8px; }
 .brand { min-width: 0; }
 .shop-row .big { display: block; }
 @media (max-width: 480px) { .hide-sm { display: none; } }
+
+/* Collect deni by prompt */
+.plain { list-style: none; margin: 0; padding: 0; }
+.plain > li { padding: 12px 0; border-top: 1px solid var(--line); }
+.plain > li:first-child { border-top: 0; padding-top: 0; }
+.plain form.inline { display: inline-block; margin-top: 8px; }
+.plain form.stack { margin-top: 10px; }
+.state-needs_owner { color: var(--tomato); }

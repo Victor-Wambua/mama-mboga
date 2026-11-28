@@ -6,8 +6,10 @@ namespace MamaMboga;
 
 use MamaMboga\Application\Port\Clock;
 use MamaMboga\Application\Port\CustomerRepository;
+use MamaMboga\Application\Port\GatewayClient;
 use MamaMboga\Application\Port\LedgerRepository;
 use MamaMboga\Application\Port\OrderRepository;
+use MamaMboga\Application\Port\PaymentRequestRepository;
 use MamaMboga\Application\Port\PriceBoardRepository;
 use MamaMboga\Application\Port\SettingsRepository;
 use MamaMboga\Application\Port\ShoppingCheckRepository;
@@ -15,6 +17,8 @@ use MamaMboga\Application\Port\SlotRepository;
 use MamaMboga\Application\Port\Transaction;
 use MamaMboga\Infrastructure\Config\Config;
 use MamaMboga\Infrastructure\Container\Container;
+use MamaMboga\Infrastructure\Gateway\CurlGatewayClient;
+use MamaMboga\Infrastructure\Gateway\UnconfiguredGatewayClient;
 use MamaMboga\Infrastructure\Http\Kernel;
 use MamaMboga\Infrastructure\Http\Middleware\Csrf;
 use MamaMboga\Infrastructure\Http\Middleware\ErrorHandler;
@@ -26,6 +30,7 @@ use MamaMboga\Infrastructure\Persistence\Migrator;
 use MamaMboga\Infrastructure\Persistence\SqliteCustomerRepository;
 use MamaMboga\Infrastructure\Persistence\SqliteLedgerRepository;
 use MamaMboga\Infrastructure\Persistence\SqliteOrderRepository;
+use MamaMboga\Infrastructure\Persistence\SqlitePaymentRequestRepository;
 use MamaMboga\Infrastructure\Persistence\SqlitePriceBoardRepository;
 use MamaMboga\Infrastructure\Persistence\SqliteSettingsRepository;
 use MamaMboga\Infrastructure\Persistence\SqliteShoppingCheckRepository;
@@ -51,6 +56,10 @@ final class App
         $c->bind(OrderRepository::class, SqliteOrderRepository::class);
         $c->bind(CustomerRepository::class, SqliteCustomerRepository::class);
         $c->bind(LedgerRepository::class, SqliteLedgerRepository::class);
+        $c->bind(PaymentRequestRepository::class, SqlitePaymentRequestRepository::class);
+        $c->bind(GatewayClient::class, static fn (): GatewayClient => $config->gatewayUrl !== '' && $config->gatewaySecretKey !== ''
+            ? new CurlGatewayClient($config->gatewayUrl, $config->gatewaySecretKey)
+            : new UnconfiguredGatewayClient());
         $c->bind(SettingsRepository::class, SqliteSettingsRepository::class);
         $c->bind(ShoppingCheckRepository::class, SqliteShoppingCheckRepository::class);
 

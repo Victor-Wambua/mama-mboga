@@ -9,6 +9,7 @@ use MamaMboga\Application\Messaging\WhatsAppLink;
 use MamaMboga\Application\Port\Clock;
 use MamaMboga\Application\Port\CustomerRepository;
 use MamaMboga\Application\Service\LedgerService;
+use MamaMboga\Application\Service\PaymentCollectionService;
 use MamaMboga\Application\Service\ShopProfile;
 use MamaMboga\Application\ValidationException;
 use MamaMboga\Domain\Money\Money;
@@ -28,6 +29,7 @@ final class OwnerDeniController extends BaseController
         private readonly CustomerRepository $customers,
         private readonly ShopProfile $shop,
         private readonly Links $links,
+        private readonly PaymentCollectionService $collection,
     ) {
         parent::__construct($pages, $clock);
     }
@@ -43,7 +45,12 @@ final class OwnerDeniController extends BaseController
             $outstanding = $outstanding->add($row['balance']);
         }
 
-        return $this->page($request, 'owner/deni', ['rows' => $rows, 'outstanding' => $outstanding]);
+        $needsYou = [];
+        foreach ($this->collection->needingOwner() as $item) {
+            $needsYou[] = ['request' => $item, 'customer' => $this->customers->find($item->customerId)];
+        }
+
+        return $this->page($request, 'owner/deni', ['rows' => $rows, 'outstanding' => $outstanding, 'needsYou' => $needsYou]);
     }
 
     public function show(Request $request): Response
@@ -62,6 +69,8 @@ final class OwnerDeniController extends BaseController
             'available' => $ledger->available(),
             'aging' => $aging,
             'statementUrl' => $statementUrl,
+            'collectEnabled' => $this->collection->enabled(),
+            'prompts' => $this->collection->forCustomer($id),
             'reminderSw' => WhatsAppLink::to($customer->phone->e164, ReminderMessage::compose($customer->name, $ledger->balance(), $aging, $this->shop->name(), $statementUrl, 'sw')),
             'reminderEn' => WhatsAppLink::to($customer->phone->e164, ReminderMessage::compose($customer->name, $ledger->balance(), $aging, $this->shop->name(), $statementUrl, 'en')),
         ]);
@@ -94,6 +103,45 @@ final class OwnerDeniController extends BaseController
 
             return "Payment of {$entry->amount->format()} recorded. Receipt {$entry->receiptCode}.";
         });
+    }
+
+    /** Send an M-Pesa prompt for the amount (blank means the whole balance). Nothing is recorded until the gateway says succeeded. */
+    public function collect(Request $request): Response
+    {
+        return $this->act($request, function (int $id) use ($request): string {
+            $text = preg_replace('/[\s,]/', '', $request->input('amount')) ?? '';
+            if ($text !== '' && preg_match('/^\d{1,7}$/', $text) !== 1) {
+                throw ValidationException::field('amount', 'Enter a whole number of shillings, or leave it blank for the whole balance.');
+            }
+            $prompt = $this->collection->request($id, $text === '' ? null : (int) $text);
+
+            return "Prompt {$prompt->reference} for KSh {$prompt->amount} sent to the customer's phone. Nothing is recorded until the gateway confirms it. Use Check status in a moment.";
+        });
+    }
+
+    /** Ask the gateway where a prompt stands; records it only if it succeeded. */
+    public function checkPrompt(Request $request): Response
+    {
+        $prompt = $this->collection->find((int) $request->param('rid')) ?? throw new HttpException(404);
+        $after = $this->collection->reconcile((int) $prompt->id);
+        $display = $after->display();
+        $this->flash($request, $display['state'] === 'needs_owner' ? 'error' : 'ok', "Prompt {$after->reference}: {$display['label']}. {$display['detail']}");
+
+        return Response::redirect('/owner/deni/' . $after->customerId);
+    }
+
+    /** The owner has looked at a prompt payment that needed them. This marks it seen and writes nothing to the book. */
+    public function reviewPrompt(Request $request): Response
+    {
+        $prompt = $this->collection->find((int) $request->param('rid')) ?? throw new HttpException(404);
+        try {
+            $this->collection->markReviewed((int) $prompt->id, $request->input('note'));
+            $this->flash($request, 'ok', "Prompt {$prompt->reference} marked as looked at. The book was not changed.");
+        } catch (ValidationException $e) {
+            $this->flash($request, 'error', implode(' ', $e->errors));
+        }
+
+        return Response::redirect('/owner/deni/' . $prompt->customerId);
     }
 
     public function charge(Request $request): Response

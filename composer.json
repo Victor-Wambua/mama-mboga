@@ -10,6 +10,9 @@
         "ext-pdo": "*",
         "ext-pdo_sqlite": "*"
     },
+    "suggest": {
+        "ext-curl": "Needed to collect deni by M-Pesa prompt through the payments gateway"
+    },
     "require-dev": {
         "friendsofphp/php-cs-fixer": "^3.64",
         "phpstan/phpstan": "^2.0",

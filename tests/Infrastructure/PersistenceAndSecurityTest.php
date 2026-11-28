@@ -23,9 +23,9 @@ final class PersistenceAndSecurityTest extends TestCase
         $first = $migrator->migrate();
         $second = $migrator->migrate();
 
-        self::assertCount(4, $first);
+        self::assertCount(5, $first);
         self::assertSame([], $second);
-        self::assertSame(4, $db->scalar('SELECT COUNT(*) FROM schema_migrations'));
+        self::assertSame(5, $db->scalar('SELECT COUNT(*) FROM schema_migrations'));
     }
 
     public function testBrokenMigrationRollsBackAndNamesTheFile(): void

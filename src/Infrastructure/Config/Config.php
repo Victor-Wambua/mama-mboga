@@ -17,6 +17,8 @@ final readonly class Config
         public string $timezone,
         public string $appUrl,
         public bool $trustProxy = false,
+        public string $gatewayUrl = '',
+        public string $gatewaySecretKey = '',
     ) {
     }
 
@@ -39,6 +41,8 @@ final readonly class Config
             $env['APP_TIMEZONE'] ?? 'Africa/Nairobi',
             rtrim($env['APP_URL'] ?? '', '/'),
             filter_var($env['TRUST_PROXY'] ?? '0', FILTER_VALIDATE_BOOLEAN),
+            rtrim($env['GATEWAY_URL'] ?? '', '/'),
+            $env['GATEWAY_SECRET_KEY'] ?? '',
         );
     }
 
