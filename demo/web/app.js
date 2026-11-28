@@ -1,6 +1,8 @@
 // Mama Mboga browser demo: a front end for the repository's own PHP code, which runs in a worker (PHP-WASM).
 // Every number on the page (prices, totals, balances, flags) is computed by that PHP code, not by this file.
 
+import { PROVIDERS, MOCK_SCENARIOS, createClient, createBody, watchPayment, GatewayError } from './gateway.js';
+
 // ---- tiny helpers ----------------------------------------------------------------------------
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -63,7 +65,16 @@ async function call(action, args = {}) {
 
 // ---- state and routing -----------------------------------------------------------------------
 
-const S = { snap: null, boot: null, bootError: null, view: 'start', param: null, draft: null, msg: '', detail: null, lang: 'sw', reminder: '', persistWarned: false, lastRef: null, quoteSeq: 0, flashNext: null };
+const S = { snap: null, boot: null, bootError: null, view: 'start', param: null, draft: null, msg: '', detail: null, lang: 'sw', reminder: '', persistWarned: false, lastRef: null, quoteSeq: 0, flashNext: null,
+  collect: { provider: loadProvider(), status: null, watch: null, scenario: {} } };
+
+/** The gateway choice is remembered; the sandbox acknowledgement never is. */
+function loadProvider() {
+  try { return localStorage.getItem('mm-demo-gateway') === 'sandbox' ? 'sandbox' : 'mock'; } catch { return 'mock'; }
+}
+function saveProvider(id) {
+  try { localStorage.setItem('mm-demo-gateway', id); } catch { /* storage blocked: the choice is just not remembered */ }
+}
 
 const NAV = [['start', 'Start'], ['prices', 'Prices'], ['messages', 'WhatsApp orders'], ['orders', 'Orders'], ['market', 'Market list'], ['deni', 'Deni'], ['how', 'How it works']];
 const TITLES = { start: 'Start', prices: "Today's prices", messages: 'Read a WhatsApp order', orders: 'Orders', market: 'Market list', deni: 'Deni book', how: 'How this demo works' };
@@ -165,6 +176,7 @@ async function show({ focusHeading = true } = {}) {
   if (focusHeading) flash(S.flashNext ?? '');
   S.flashNext = null;
   S.detail = null;
+  stopWatch();
   if (S.snap && view === 'deni' && param) {
     const r = await call('customer', { customerId: Number(param) });
     if (r.ok) S.detail = r.data;
@@ -174,6 +186,7 @@ async function show({ focusHeading = true } = {}) {
     if (rem.ok) S.reminder = rem.data.text;
   }
   render({ focusHeading });
+  if (S.detail) resumePrompts();
 }
 
 // ---- views -----------------------------------------------------------------------------------
@@ -193,6 +206,7 @@ function viewStart() {
           <li><div><h3>See what to buy at the market</h3><p>Save the order, then open the market list. Quantities from every open order are added up per item.</p><a href="#/market">Open the market list</a></div></li>
           <li><div><h3>Deliver an order on deni</h3><p>Move a deni order to delivered. It is charged to the customer's book, up to their credit limit.</p><a href="#/orders">Open orders</a></div></li>
           <li><div><h3>Record a payment</h3><p>Pay part of a balance with an M-Pesa code. Then try the same code again, or pay more than is owed, and watch the book refuse.</p><a href="#/deni">Open the deni book</a></div></li>
+          <li><div><h3>Collect deni by M-Pesa prompt</h3><p>Open a customer who owes and press Send M-Pesa prompt. The mock gateway answers in a few seconds, and the book is written only when it says succeeded. Pick "Answers after the deadline" or "status check disagrees" to see a payment held for you instead.</p><a href="#/deni">Open the deni book</a></div></li>
         </ol>
       </section>
       <aside class="rule-top" aria-labelledby="today-h">
@@ -478,6 +492,7 @@ function viewDeni() {
     <h1>Deni book</h1>
     <p class="lead">Who owes what. The book only ever adds rows: a payment or a credit note is a new row, never an edit.</p>
     <p class="muted">Total owed: <strong class="num">${kes(total)}</strong> across ${plural(s.customers.filter((c) => c.balance > 0).length, 'customer', 'customers')}.</p>
+    ${needsYouBlock(s.needsYou)}
     <table class="table stack">
       <caption class="sr">Customers with deni</caption>
       <thead><tr><th scope="col">Customer</th><th scope="col" class="r">Owes</th><th scope="col" class="r">Credit limit</th><th scope="col" class="r">Room left</th><th scope="col">Oldest charge</th></tr></thead>
@@ -537,7 +552,8 @@ function viewCustomer() {
         </table>`}
       </section>
       <section aria-label="Write in the book">
-        <h2 style="margin-top:0">Record a payment</h2>
+        ${collectSection(d)}
+        <h2>Record a payment</h2>
         <form data-form="payment" data-customer="${d.id}" novalidate>
           <div class="fields">
             <label class="f"><span class="lbl">Amount (KSh)</span><input name="amount" inputmode="numeric" autocomplete="off"></label>
@@ -582,6 +598,248 @@ function viewCustomer() {
     </div>`;
 }
 
+
+// ---- collect by prompt -----------------------------------------------------------------------
+// The page, not PHP, talks to the payment gateway. PHP (through the bridge) checks the amount, makes the short
+// request id, and runs the app's own reconcile step on whatever the gateway reports.
+
+const MOCK_LIMIT = 1000;
+const defaultAmount = (d, provider) => (provider === 'mock' ? Math.min(d.balance, MOCK_LIMIT) : d.balance);
+const providerName = (id) => (id === 'sandbox' ? 'Safaricom sandbox' : 'mock gateway');
+
+const SANDBOX_ACK = 'This sends a real prompt to the number I entered. I will use only my own number. Two KES 1 payments have been completed with a PIN on this sandbox, which is a small sample, and whether approving a prompt debits a real wallet has not been checked.';
+
+function needsYouBlock(items) {
+  if (!items || items.length === 0) return '';
+  return html`
+    <section class="needs" aria-labelledby="needs-h">
+      <h2 id="needs-h" style="margin-top:0">Prompt payments that need you</h2>
+      <p class="small muted">The gateway is not sure about these, so none has been written in the book. Open the customer, check M-Pesa, and record it by hand if the money arrived.</p>
+      <ul class="plain">${items.map((p) => html`<li><a href="#/deni/${p.customerId}"><strong>${p.customerName}</strong></a>, ${kes(p.amount)}, <span class="mono">${p.reference}</span><div class="small">${p.detail}</div></li>`)}</ul>
+    </section>`;
+}
+
+function collectSection(d) {
+  const provider = S.collect.provider;
+  const sandbox = provider === 'sandbox';
+  const live = S.collect.status;
+  return html`
+    <h2 id="collect-h" style="margin-top:0">Collect by prompt</h2>
+    ${d.balance <= 0 ? html`<p class="muted">${d.name} owes nothing, so there is nothing to collect.</p>` : html`
+    <p class="muted">Sends an M-Pesa prompt through a payments gateway. The book is only written when the gateway reports the payment succeeded.</p>
+    <form data-form="collect" data-customer="${d.id}" novalidate aria-labelledby="collect-h">
+      <fieldset><legend>Gateway</legend>
+        <label class="choice"><input type="radio" name="provider" value="mock" data-act-change="provider"${!sandbox ? raw(' checked') : ''}> Mock gateway (default)</label>
+        <label class="choice"><input type="radio" name="provider" value="sandbox" data-act-change="provider"${sandbox ? raw(' checked') : ''}> Safaricom sandbox</label>
+      </fieldset>
+      <label class="f"><span class="lbl">Amount (KSh)</span><input id="collect-amount" name="amount" inputmode="numeric" autocomplete="off" value="${defaultAmount(d, provider)}">
+        <span class="hint" id="hint-mock"${sandbox ? raw(' hidden') : ''}>Up to what ${d.name} owes, ${kes(d.balance)}. The public demo key takes at most ${kes(MOCK_LIMIT)} in one prompt.</span>
+        <span class="hint" id="hint-sandbox"${!sandbox ? raw(' hidden') : ''}>Up to what ${d.name} owes, ${kes(d.balance)}.</span></label>
+      <div id="mock-panel"${sandbox ? raw(' hidden') : ''}>
+        <label class="f"><span class="lbl">What the customer does</span><select name="scenario" id="collect-scenario">${MOCK_SCENARIOS.map(([v, t]) => html`<option value="${v}">${t}</option>`)}</select>
+          <span class="hint">The mock gateway plays this out. It sends the prompt to ${d.name}'s invented number ${d.phone}, which is never contacted, and no real money moves.</span></label>
+      </div>
+      <div id="sandbox-panel"${!sandbox ? raw(' hidden') : ''}>
+        <p class="notice"><strong>KES 1 stands in for the amount.</strong> The sandbox key is capped at KSh 100, so the prompt asks for a flat KES 1 test charge, and the book entry is marked as a sandbox test. This sends a real prompt to the phone number you enter.</p>
+        <label class="f"><span class="lbl">Your own phone number</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="0700 000 000"><span class="hint">Use only your own number. It is sent to the sandbox gateway and is not kept in this demo.</span></label>
+        <label class="choice ack"><input type="checkbox" name="ack" value="1"> <span>${SANDBOX_ACK}</span></label>
+      </div>
+      <div style="margin-top:12px"><button class="btn" type="submit" id="collect-send">Send M-Pesa prompt</button></div>
+    </form>`}
+    <div id="collect-live" class="live${live ? ' ' + live.tone : ''}" role="status" aria-live="polite">${live ? html`<p>${live.text}</p>` : ''}</div>
+    <p class="small muted" id="collect-elapsed" aria-hidden="true"></p>
+    ${d.prompts.length ? html`
+      <h3 id="prompts-h">Prompts sent</h3>
+      <ul class="plain prompts" aria-labelledby="prompts-h">${d.prompts.map((p) => promptItem(p))}</ul>` : ''}`;
+}
+
+function promptItem(p) {
+  const sandboxTest = p.mode === 'sandbox';
+  return html`
+    <li id="prompt-${p.id}">
+      <div><strong class="mono">${p.reference}</strong>, ${kes(p.amount)}${sandboxTest ? ' (KES 1 test charge)' : ''}, ${p.at}, ${providerName(p.mode)}</div>
+      <div><strong class="state-${p.state}">${p.label}.</strong> <span class="small">${p.detail}</span></div>
+      <div class="actions">
+        ${p.checkable && p.sent ? html`<button class="btn quiet sm" type="button" data-act="prompt-check" data-id="${p.id}" aria-label="Check status of ${p.reference}">Check status</button>` : ''}
+        ${!p.sent && p.status === 'pending' && p.mode === 'mock' ? html`<button class="btn quiet sm" type="button" data-act="prompt-resend" data-id="${p.id}" aria-label="Send ${p.reference} again">Send again</button>` : ''}
+        ${!p.sent && p.status === 'pending' ? html`<button class="btn quiet sm" type="button" data-act="prompt-discard" data-id="${p.id}" aria-label="Discard ${p.reference}">Discard</button>` : ''}
+      </div>
+      ${p.needsOwner ? html`
+        <form data-form="collect-review" data-id="${p.id}" novalidate>
+          <label class="f"><span class="lbl">Note <span class="hint">optional, for example what you found in M-Pesa</span></span><input name="note" autocomplete="off" maxlength="140"></label>
+          <div style="margin-top:8px"><button class="btn quiet sm" type="submit">I have looked at this</button></div>
+          <p class="small muted">This only marks it seen. To put the money in the book, use Record a payment with the M-Pesa code.</p>
+        </form>` : ''}
+    </li>`;
+}
+
+function setLive(text, tone = '') {
+  S.collect.status = text ? { text, tone } : null;
+  const el = $('#collect-live');
+  if (el) {
+    el.className = 'live' + (tone ? ' ' + tone : '');
+    el.textContent = '';
+    if (text) { const p = document.createElement('p'); p.textContent = text; el.append(p); }
+  }
+}
+
+function stopWatch() {
+  const w = S.collect.watch;
+  if (!w) return;
+  w.ctrl.abort();
+  clearInterval(w.timer);
+  S.collect.watch = null;
+  const el = $('#collect-elapsed');
+  if (el) el.textContent = '';
+}
+
+function livePhaseText(mode, payment, info) {
+  if (info.waitSec) return `The gateway asked us to slow down. Checking again in ${info.waitSec} seconds.`;
+  if (info.error) return 'Could not read the gateway just now. Still waiting, and trying again.';
+  if (info.confirming) {
+    return mode === 'sandbox'
+      ? 'Confirming. The gateway has the reply from the phone and is checking it with Safaricom, which can take up to 30 seconds. It is not paid, and nothing is in the book, until the gateway says succeeded.'
+      : 'Confirming. The gateway has the (simulated) reply and is checking it, which takes a few seconds. It is not paid, and nothing is in the book, until the gateway says succeeded.';
+  }
+  return mode === 'sandbox'
+    ? 'Check your phone for an M-Pesa prompt and enter your PIN to approve it, or cancel it. This can take up to 2.5 minutes.'
+    : 'Prompt sent to the mock gateway. Waiting for the customer to answer.';
+}
+
+/** Poll one prompt's payment, show honest progress, and when the gateway has an answer let PHP apply the rules. */
+async function watchPrompt(prompt) {
+  stopWatch();
+  const provider = PROVIDERS[prompt.mode];
+  const client = createClient(provider);
+  const ctrl = new AbortController();
+  const startedAt = Date.now();
+  const timer = setInterval(() => {
+    const el = $('#collect-elapsed');
+    if (el) el.textContent = `Waiting for ${Math.round((Date.now() - startedAt) / 1000)} s`;
+  }, 1000);
+  S.collect.watch = { requestId: prompt.id, ctrl, timer };
+  setLive(livePhaseText(prompt.mode, null, {}));
+  const result = await watchPayment({
+    client, id: prompt.gatewayPaymentId, provider, signal: ctrl.signal,
+    isHidden: () => document.hidden,
+    whenVisible: () => new Promise((resolve) => document.addEventListener('visibilitychange', () => { if (!document.hidden) resolve(); }, { once: true })),
+    onUpdate: (payment, info) => { if (!ctrl.signal.aborted && payment?.status !== 'succeeded') setLive(livePhaseText(prompt.mode, payment, info)); },
+  });
+  if (result.reason === 'aborted') return;
+  stopWatch();
+  if (result.reason === 'window' || !result.payment) {
+    setLive('Still waiting after a few minutes. The request stays open: use Check status in a moment, or come back to this page later.');
+    return;
+  }
+  await applyPayment(prompt, result.payment);
+}
+
+/** Hand a payment the gateway reported to PHP's reconcile step, then show what PHP decided. */
+async function applyPayment(prompt, payment) {
+  const r = await call('collectReconcile', { requestId: prompt.id, payment });
+  if (!r.ok) {
+    setLive(Object.values(r.errors || {}).join(' ') || r.message, 'warn');
+    return;
+  }
+  const tone = r.data.state === 'recorded' ? 'ok' : r.data.state === 'needs_owner' ? 'warn' : '';
+  // Redraw first, then say it: the live region is rebuilt by the redraw, and only text set afterwards is announced.
+  await refreshCustomer();
+  setLive(`${r.data.label}. ${r.data.detail}`, tone);
+}
+
+async function refreshCustomer() {
+  if (!(S.view === 'deni' && S.param)) return;
+  const snap = await call('snapshot');
+  if (snap.ok) S.snap = snap.data;
+  const r = await call('customer', { customerId: Number(S.param) });
+  if (r.ok) S.detail = r.data;
+  const rem = await call('reminder', { customerId: Number(S.param), lang: S.lang });
+  if (rem.ok) S.reminder = rem.data.text;
+  render();
+}
+
+const gatewayMessage = (e, mode) => {
+  const name = providerName(mode);
+  if (e instanceof GatewayError) {
+    const next = mode === 'mock' ? 'Use Send again (the same request id is reused, so it cannot go out twice) or Discard.' : 'Discard it and try again.';
+    if (e.kind === 'rate_limited') return `The ${name} is limiting requests from this connection, so nothing was sent. The request is saved as not sent. Wait ${e.retryAfterSec ?? 30} seconds. ${next}`;
+    if (e.kind === 'unreachable' || e.kind === 'server') return `Could not reach the ${name}. The request is saved as not sent, and it may or may not have reached the gateway. ${next}`;
+    if (e.kind === 'over_cap') return `The ${name} refused this as over the limit for the public demo key. Nothing was sent.`;
+    if (e.kind === 'phone_not_approved') return 'The sandbox on this site only accepts phone numbers its owner has approved, and that is not one of them. Nothing was sent.';
+    return `The ${name} did not accept the request: ${e.message} Nothing was sent.`;
+  }
+  return String(e && e.message ? e.message : e);
+};
+
+/** Send the prompt for a request PHP has saved. Returns the linked prompt, or null after telling the owner why not. */
+async function sendPrompt(prompt, phone, scenario) {
+  const client = createClient(PROVIDERS[prompt.mode]);
+  setLive(`Sending the prompt to the ${providerName(prompt.mode)}.`);
+  let payment;
+  try {
+    ({ payment } = await client.createPayment(createBody(prompt.mode, prompt, phone, scenario), prompt.idempotencyKey));
+  } catch (e) {
+    // Rate limits and network faults leave the request saved as not sent (it may or may not have reached the gateway).
+    // Anything else means the gateway refused it outright, so the request is closed.
+    const keep = e instanceof GatewayError && ['unreachable', 'server', 'rate_limited', 'reference_pending'].includes(e.kind);
+    if (!keep) await call('collectDiscard', { requestId: prompt.id, reason: String(e && e.message ? e.message : e) });
+    await refreshCustomer();
+    setLive(gatewayMessage(e, prompt.mode), 'warn');
+    return null;
+  }
+  const linked = await call('collectSent', { requestId: prompt.id, payment });
+  if (!linked.ok) { setLive(Object.values(linked.errors || {}).join(' ') || linked.message, 'warn'); return null; }
+  return linked.data;
+}
+
+async function submitCollect(form) {
+  const v = Object.fromEntries(new FormData(form).entries());
+  const mode = S.collect.provider;
+  const problems = {};
+  if (mode === 'sandbox') {
+    if (!String(v.phone || '').trim()) problems.phone = 'Enter your own phone number.';
+    if (!v.ack) problems.ack = 'Tick the box to confirm before a real prompt is sent.';
+  }
+  if (Object.keys(problems).length) { showErrors(form, problems); return; }
+  const opened = await call('collectOpen', { customerId: form.dataset.customer, amount: v.amount, mode });
+  if (!opened.ok) { showErrors(form, opened.errors, opened.message); return; }
+  const prompt = opened.data;
+  S.collect.scenario[prompt.id] = v.scenario || 'success';
+  const phone = mode === 'sandbox' ? v.phone : S.detail.phone;
+  // The sandbox acknowledgement and number are used for this one send and then cleared, never kept.
+  if (mode === 'sandbox') { form.elements.ack.checked = false; form.elements.phone.value = ''; }
+  const sent = await sendPrompt(prompt, phone, v.scenario);
+  if (!sent) return;
+  await refreshCustomer();
+  await watchPrompt(sent);
+}
+
+async function checkPrompt(id) {
+  const prompt = S.detail.prompts.find((p) => String(p.id) === String(id));
+  if (!prompt || !prompt.gatewayPaymentId) return;
+  stopWatch();
+  setLive('Asking the gateway.');
+  try {
+    const payment = await createClient(PROVIDERS[prompt.mode]).getPayment(prompt.gatewayPaymentId);
+    if (payment.status === 'pending') {
+      const fresh = { ...prompt };
+      await watchPrompt(fresh);
+    } else {
+      await applyPayment(prompt, payment);
+    }
+  } catch (e) {
+    setLive(gatewayMessage(e, prompt.mode), 'warn');
+  }
+}
+
+/** When the customer page opens, pick up any prompt that was still waiting when the page was last closed. */
+async function resumePrompts() {
+  const d = S.detail;
+  if (!d) return;
+  const waiting = d.prompts.find((p) => p.sent && p.status === 'pending' && p.checkable);
+  if (waiting && !S.collect.watch) watchPrompt(waiting);
+}
+
 function viewHow() {
   return html`
     <h1>How this demo works</h1>
@@ -594,6 +852,7 @@ function viewHow() {
           <li>Price board, stock, order placing (stock and slot checks, credit room), the status flow and the market list.</li>
           <li>The deni ledger and its rules: no overpaying, a credit limit, one use of each receipt code, no back-dated rows, one charge per order.</li>
           <li>The SQLite repositories, the migrations and the sample-shop seeder. The tables really are SQLite, with the real append-only triggers.</li>
+          <li>Collecting deni by prompt: the amount check (never above what is owed), the short request id, and the reconcile step that writes the book only for a clean <code>succeeded</code>, once per gateway payment, through the same ledger rules. A payment the gateway holds for review, a late success, or a success whose callback and status check disagree is shown to you and never recorded by itself.</li>
         </ul>
         <p>These are the repository's own files from <code>src/</code> and <code>migrations/</code>, copied into the page unchanged at build time. A test in the repository runs the same bridge on ordinary PHP, and the repository's unit tests cover the code underneath.</p>
         <h2>What is different from the real app</h2>
@@ -601,7 +860,9 @@ function viewHow() {
           <li>The web layer is not used: no HTTP router, sessions, PIN login, CSRF checks or page templates. This page is a different front end, written for the demo, that talks to the same services.</li>
           <li>The database file lives in memory inside your browser, and a copy is kept in your browser's storage so changes survive a reload.</li>
           <li>Two clocks. The shop clock is today's date at 06:30, so delivery slots are open whenever you visit. The deni book uses real time, but never earlier than its newest row.</li>
-          <li>Nothing is sent: no WhatsApp message, no M-Pesa request, no statement link.</li>
+          <li>Collect by prompt is the one place the browser, not PHP, talks to the gateway. PHP running in WebAssembly has no network, so this page calls the payments gateway, polls it, and hands PHP the payment it read. The real app does it the other way round: PHP calls the gateway with curl and a server-side secret key. This page uses the gateway's public demo key.</li>
+          <li>The default gateway is a mock: it plays out the outcome you pick and no phone is contacted. Its receipts start with MOCK and the book entry says it was simulated. An opt-in Safaricom sandbox choice sends a real prompt to a number you enter, behind a tick-box, as a flat KES 1 test charge that stands in for the amount; the entry is marked as a sandbox test.</li>
+          <li>Nothing else is sent: no WhatsApp message and no statement link.</li>
         </ul>
         <h2>Not shown here</h2>
         <p>The customer menu and checkout, the PIN login, the delivery run sheet, daily takings, settings, signed statement links, and the installable offline app. Run the project to see them.</p>
@@ -616,7 +877,7 @@ composer seed
 composer serve</pre>
         <p>Then open <code>http://127.0.0.1:8080</code>. The owner console is at <code>/owner</code> with the demo PIN <code>246810</code>, which only protects sample data.</p>
         <h2>Size and privacy</h2>
-        <p>The PHP runtime is about 18 MB unpacked and about 7 MB over the network. After the first visit your browser keeps it and the demo works offline. Your changes are stored in this browser only; nothing leaves it.</p>
+        <p>The PHP runtime is about 18 MB unpacked and about 7 MB over the network. After the first visit your browser keeps it and the demo works offline. Your changes are stored in this browser only. The only thing that leaves it is a prompt you choose to send to the payments gateway: an amount, a short request id and a phone number (an invented one for the mock, the one you type for the sandbox).</p>
         <p class="small muted">The PHP runtime is the WordPress Playground build of PHP, under its own licences. See the <a href="THIRD-PARTY-NOTICES.txt">third-party notices</a>.</p>
         <p class="small muted">${S.boot ? `PHP ${S.boot.phpVersion} started in ${S.boot.startedMs} ms${S.boot.restored ? ', with your earlier changes restored' : ''}.` : ''}</p>
       </aside>
@@ -758,6 +1019,19 @@ document.addEventListener('click', async (ev) => {
     else flash(Object.values(r.errors || {}).join(' ') || r.message, false);
     return;
   }
+  if (act === 'prompt-check') { await checkPrompt(el.dataset.id); return; }
+  if (act === 'prompt-resend') {
+    const prompt = S.detail.prompts.find((p) => String(p.id) === el.dataset.id);
+    if (!prompt) return;
+    const sent = await sendPrompt(prompt, S.detail.phone, S.collect.scenario[prompt.id] || 'success');
+    if (sent) { await refreshCustomer(); await watchPrompt(sent); }
+    return;
+  }
+  if (act === 'prompt-discard') {
+    const r = await call('collectDiscard', { requestId: el.dataset.id, reason: 'Discarded by the owner. It was never accepted by the gateway.' });
+    if (r.ok) { await refreshCustomer(); setLive('Discarded. Nothing was recorded.'); } else flash(Object.values(r.errors || {}).join(' ') || r.message, false);
+    return;
+  }
   if (act === 'copy-reminder') {
     const note = $('#copy-note');
     try { await navigator.clipboard.writeText($('#reminder-text').value); note.textContent = 'Copied.'; } catch { note.textContent = 'Could not copy. Select the text and copy it.'; }
@@ -779,6 +1053,14 @@ document.addEventListener('change', async (ev) => {
   } else if (kind === 'bought') {
     const r = await call('markBought', { itemId: el.dataset.item, unit: el.dataset.unit, bought: el.checked });
     if (r.ok) render();
+  } else if (kind === 'provider') {
+    S.collect.provider = el.value;
+    saveProvider(el.value);
+    const sandbox = el.value === 'sandbox';
+    for (const [id, show] of [['mock-panel', !sandbox], ['hint-mock', !sandbox], ['sandbox-panel', sandbox], ['hint-sandbox', sandbox]]) { const n = document.getElementById(id); if (n) n.hidden = !show; }
+    const amount = $('#collect-amount');
+    if (amount && S.detail) amount.value = defaultAmount(S.detail, el.value);
+    if (!sandbox) { const form = el.form; if (form) { form.elements.ack.checked = false; form.elements.phone.value = ''; clearErrors(form); } }
   } else if (kind === 'lang') {
     S.lang = el.value;
     const rem = await call('reminder', { customerId: S.detail.id, lang: S.lang });
@@ -812,6 +1094,12 @@ document.addEventListener('submit', async (ev) => {
 
   if (kind === 'read') { await readMessage(v.message || ''); return; }
   if (kind === 'order') { await saveOrder(form); return; }
+  if (kind === 'collect') { await submitCollect(form); return; }
+  if (kind === 'collect-review') {
+    const r = await call('collectReview', { requestId: form.dataset.id, note: v.note || '' });
+    if (r.ok) { flash('Marked as looked at. The book was not changed.'); await refreshCustomer(); } else showErrors(form, r.errors, r.message);
+    return;
+  }
 
   const spec = {
     entry: () => ['setEntry', { itemId: form.dataset.item, unit: v.unit, price: v.price, available: v.available, special: form.elements.special.checked, note: v.note }, `Saved ${$('strong', form).textContent}.`],
