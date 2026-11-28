@@ -209,6 +209,24 @@ final class PaymentCollectionService
         return $reviewed;
     }
 
+    /**
+     * Give up on a request the gateway never accepted. A request that was sent cannot be abandoned:
+     * it is settled by the gateway's answer, so the owner can never lose track of a prompt that went out.
+     *
+     * @throws ValidationException
+     */
+    public function abandon(int $requestId, string $reason): PaymentRequest
+    {
+        $request = $this->requests->find($requestId) ?? throw ValidationException::field('request', 'Request not found.');
+        if ($request->sent() || $request->recorded()) {
+            throw ValidationException::field('request', 'That prompt was sent, so it ends when the gateway reports how it ended.');
+        }
+        $closed = $request->with(['status' => GatewayStatus::Failed, 'lastError' => trim($reason), 'updatedAt' => $this->clock->now()]);
+        $this->requests->save($closed);
+
+        return $closed;
+    }
+
     /** @return list<PaymentRequest> */
     public function forCustomer(int $customerId): array
     {

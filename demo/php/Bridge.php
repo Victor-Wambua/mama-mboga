@@ -5,17 +5,22 @@ declare(strict_types=1);
 namespace MamaMboga\Demo;
 
 use MamaMboga\App;
+use MamaMboga\Application\Collection\PaymentRequest;
 use MamaMboga\Application\Command\PlaceOrder;
+use MamaMboga\Application\Gateway\GatewayPayment;
 use MamaMboga\Application\Messaging\ReminderMessage;
 use MamaMboga\Application\Port\Clock;
 use MamaMboga\Application\Port\CustomerRepository;
+use MamaMboga\Application\Port\GatewayClient;
 use MamaMboga\Application\Port\LedgerRepository;
 use MamaMboga\Application\Port\OrderRepository;
+use MamaMboga\Application\Port\PaymentRequestRepository;
 use MamaMboga\Application\Port\PriceBoardRepository;
 use MamaMboga\Application\Port\Transaction;
 use MamaMboga\Application\Seed\DemoSeeder;
 use MamaMboga\Application\Service\LedgerService;
 use MamaMboga\Application\Service\OrderService;
+use MamaMboga\Application\Service\PaymentCollectionService;
 use MamaMboga\Application\Service\PriceBoardService;
 use MamaMboga\Application\Service\ShoppingListService;
 use MamaMboga\Application\Service\ShopProfile;
@@ -49,6 +54,7 @@ final class Bridge
     public function __construct(
         private readonly Container $c,
         private readonly Clock $shopClock,
+        private readonly Clock $bookClock,
     ) {
     }
 
@@ -80,7 +86,16 @@ final class Bridge
             $ledgerClock,
         ));
 
-        $bridge = new self($c, $shopClock);
+        $c->bind(PaymentCollectionService::class, static fn (Container $c): PaymentCollectionService => new PaymentCollectionService(
+            $c->get(PaymentRequestRepository::class),
+            $c->get(LedgerService::class),
+            $c->get(CustomerRepository::class),
+            $c->get(GatewayClient::class),
+            $c->get(Transaction::class),
+            $ledgerClock,
+        ));
+
+        $bridge = new self($c, $shopClock, $ledgerClock);
         $c->get(Migrator::class)->migrate();
         if ($db->scalar('SELECT COUNT(*) FROM items') === 0) {
             $c->get(DemoSeeder::class)->seed();
@@ -115,6 +130,11 @@ final class Bridge
                 'creditNote' => $this->creditNote($args),
                 'charge' => $this->charge($args),
                 'reminder' => $this->reminder($args),
+                'collectOpen' => $this->collectOpen($args),
+                'collectSent' => $this->collectSent($args),
+                'collectReconcile' => $this->collectReconcile($args),
+                'collectReview' => $this->collectReview($args),
+                'collectDiscard' => $this->collectDiscard($args),
                 default => throw new \InvalidArgumentException('Unknown action: ' . $action),
             };
 
@@ -183,6 +203,7 @@ final class Bridge
                 'bought' => $row['bought'],
             ], $this->c->get(ShoppingListService::class)->forDate($today)),
             'customers' => $this->customers(),
+            'needsYou' => $this->needsYou(),
         ];
     }
 
@@ -249,6 +270,7 @@ final class Bridge
                 'over30' => $aging->over30->amount,
             ],
             'rows' => $rows,
+            'prompts' => array_map($this->prompt(...), $this->c->get(PaymentCollectionService::class)->forCustomer($customerId)),
         ];
     }
 
@@ -557,6 +579,147 @@ final class Bridge
             self::STATEMENT_PLACEHOLDER,
             $lang,
         )];
+    }
+
+    // ---- collect by prompt -----------------------------------------------------------------
+    //
+    // In the demo the page, not PHP, talks to the gateway (PHP in the browser has no network). PHP does the
+    // rest with the app's own PaymentCollectionService: it checks the amount against the balance, makes the
+    // short request id, and when the page hands it what the gateway reported, runs the real reconcile step,
+    // which writes the deni book only for a clean `succeeded`.
+
+    /** What one prompt-for-payment may be at most, with the public demo key (the gateway caps publishable keys at this). */
+    public const MOCK_PROMPT_LIMIT = 1000;
+    /** The flat charge for the opt-in sandbox variant; it stands in for the amount. */
+    public const SANDBOX_CHARGE = 1;
+
+    /**
+     * @param array<string, mixed> $a customerId, amount (optional), mode (mock or sandbox)
+     * @return array<string, mixed>
+     */
+    private function collectOpen(array $a): array
+    {
+        $customerId = $this->int($a, 'customerId');
+        $mode = $this->str($a, 'mode') === 'sandbox' ? PaymentRequest::MODE_SANDBOX : PaymentRequest::MODE_MOCK;
+        $text = trim($this->str($a, 'amount'));
+        $amount = null;
+        if ($text !== '') {
+            $amount = $this->amount($a);
+        } elseif ($mode === PaymentRequest::MODE_MOCK) {
+            $owed = $this->c->get(LedgerService::class)->ledgerFor($customerId)->balance()->amount;
+            $amount = $owed > 0 ? min($owed, self::MOCK_PROMPT_LIMIT) : null;
+        }
+        $request = $this->c->get(PaymentCollectionService::class)->open(
+            $customerId,
+            $amount,
+            $mode,
+            $mode === PaymentRequest::MODE_SANDBOX ? self::SANDBOX_CHARGE : null,
+            $mode === PaymentRequest::MODE_MOCK ? self::MOCK_PROMPT_LIMIT : null,
+        );
+
+        return $this->prompt($request);
+    }
+
+    /**
+     * The page created the payment at the gateway; link it to the request. A pending payment writes nothing.
+     *
+     * @param array<string, mixed> $a requestId, payment
+     * @return array<string, mixed>
+     */
+    private function collectSent(array $a): array
+    {
+        return $this->prompt($this->c->get(PaymentCollectionService::class)->attach($this->int($a, 'requestId'), $this->gatewayPayment($a)));
+    }
+
+    /**
+     * Run the app's reconcile step on a payment the page read from the gateway.
+     *
+     * @param array<string, mixed> $a requestId, payment
+     * @return array<string, mixed>
+     */
+    private function collectReconcile(array $a): array
+    {
+        $payment = $this->gatewayPayment($a);
+        $service = new PaymentCollectionService(
+            $this->c->get(PaymentRequestRepository::class),
+            $this->c->get(LedgerService::class),
+            $this->c->get(CustomerRepository::class),
+            new SuppliedGatewayClient($payment),
+            $this->c->get(Transaction::class),
+            $this->bookClock,
+        );
+
+        return $this->prompt($service->reconcile($this->int($a, 'requestId')));
+    }
+
+    /**
+     * @param array<string, mixed> $a requestId, note
+     * @return array<string, mixed>
+     */
+    private function collectReview(array $a): array
+    {
+        return $this->prompt($this->c->get(PaymentCollectionService::class)->markReviewed($this->int($a, 'requestId'), $this->str($a, 'note')));
+    }
+
+    /**
+     * @param array<string, mixed> $a requestId, reason
+     * @return array<string, mixed>
+     */
+    private function collectDiscard(array $a): array
+    {
+        return $this->prompt($this->c->get(PaymentCollectionService::class)->abandon($this->int($a, 'requestId'), $this->str($a, 'reason') ?: 'Not sent from this browser.'));
+    }
+
+    /** @param array<string, mixed> $a */
+    private function gatewayPayment(array $a): GatewayPayment
+    {
+        $data = $a['payment'] ?? null;
+        if (!is_array($data)) {
+            throw ValidationException::field('payment', 'The page did not send a payment.');
+        }
+        try {
+            return GatewayPayment::fromArray($data);
+        } catch (\InvalidArgumentException $e) {
+            throw ValidationException::field('payment', $e->getMessage());
+        }
+    }
+
+    /** @return array<string, mixed> */
+    private function prompt(PaymentRequest $p): array
+    {
+        return [
+            'id' => (int) $p->id,
+            'reference' => $p->reference,
+            'customerId' => $p->customerId,
+            'amount' => $p->amount,
+            'charge' => $p->charge,
+            'mode' => $p->mode,
+            'idempotencyKey' => $p->idempotencyKey,
+            'gatewayPaymentId' => $p->gatewayPaymentId,
+            'status' => $p->status->value,
+            'flags' => $p->flags,
+            'receipt' => $p->receipt,
+            'sent' => $p->sent(),
+            'recorded' => $p->recorded(),
+            'checkable' => $p->checkable(),
+            'needsOwner' => $p->needsOwner(),
+            'state' => $p->display()['state'],
+            'label' => $p->display()['label'],
+            'detail' => $p->display()['detail'],
+            'at' => $p->createdAt->format('Y-m-d H:i'),
+        ];
+    }
+
+    /** @return list<array<string, mixed>> prompt payments waiting for the owner, across customers */
+    private function needsYou(): array
+    {
+        $customers = $this->c->get(CustomerRepository::class);
+        $out = [];
+        foreach ($this->c->get(PaymentCollectionService::class)->needingOwner() as $p) {
+            $out[] = $this->prompt($p) + ['customerName' => $customers->find($p->customerId)->name ?? 'Customer'];
+        }
+
+        return $out;
     }
 
     // ---- shaping ---------------------------------------------------------------------------
