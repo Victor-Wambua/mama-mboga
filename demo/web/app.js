@@ -642,7 +642,7 @@ function collectSection(d) {
       <div id="sandbox-panel"${!sandbox ? raw(' hidden') : ''}>
         <p class="notice"><strong>KES 1 stands in for the amount.</strong> The sandbox key is capped at KSh 100, so the prompt asks for a flat KES 1 test charge, and the book entry is marked as a sandbox test. This sends a real prompt to the phone number you enter.</p>
         <label class="f"><span class="lbl">Your own phone number</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="0700 000 000"><span class="hint">Use only your own number. It is sent to the sandbox gateway and is not kept in this demo.</span></label>
-        <label class="choice ack"><input type="checkbox" name="ack" value="1"> <span>${SANDBOX_ACK}</span></label>
+        <label class="choice ack field-holder"><input type="checkbox" name="ack" value="1"> <span>${SANDBOX_ACK}</span></label>
       </div>
       <div style="margin-top:12px"><button class="btn" type="submit" id="collect-send">Send M-Pesa prompt</button></div>
     </form>`}
