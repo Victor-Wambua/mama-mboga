@@ -14,7 +14,7 @@ I wanted to see how much one person could fix with a small, honest system, built
 
 Goals: a price board set in minutes; ordering that works on a 360 px low-end phone; a bridge to WhatsApp, not a replacement; a market list generated from orders; a credit ledger that cannot be quietly edited; integer shillings everywhere.
 
-Non-goals: payments processing, multi-shop tenancy, a native app, and any claim that this has users. It is a portfolio build with synthetic data.
+Non-goals: processing payments itself (an M-Pesa prompt goes through a separate gateway, see the README), multi-shop tenancy, a native app, and any claim that this has users. It is a portfolio build with synthetic data.
 
 ## What I built
 
@@ -38,6 +38,8 @@ How well does it work? I wrote 121 cases while building, then 57 more afterwards
 
 **6. WhatsApp as a link, not an API.** After ordering, the customer gets a `wa.me/<shop number>?text=...` link with the order and its reference. It is built with `rawurlencode`, so Swahili text, bullets and line breaks survive, and a test round-trips a nasty string through the URL. The order is saved before the link is shown, so a customer who never taps it still has an order. I chose a link because the Business API needs a verified business account and message templates, and the point is to meet the owner where she already is. The cost is that nothing is automatic.
 
+**7. Collecting deni through a gateway: the book moves only when the gateway says so.** A prompt is asked for through a `GatewayClient` port (curl in production, a fake in tests) and saved as a `payment_requests` row with a short id and a stable idempotency key, so a resend cannot send twice. A reconcile step reads the gateway's answer and writes the book through the existing `LedgerService::recordPayment()` only for a clean `succeeded`, so a reused receipt and an overpayment are still refused by the ledger, not by new code. A payment the gateway holds for review, a late success, or a success whose callback and status check disagree becomes an item for the owner and is never recorded automatically. The ledger triggers are untouched. In the browser demo PHP has no network, so the page talks to the gateway and hands PHP the payment it read; the same reconcile code runs on it.
+
 ## How it is kept correct and safe
 
 - **Concurrency.** Writes take `BEGIN IMMEDIATE`, so the stock check, slot capacity check and credit check happen under one lock. A test orders the last bunch twice in a row and asserts exactly one succeeds (sequentially, so the lock itself is not stress-tested); stock cannot go negative even at the SQL level.
@@ -48,8 +50,8 @@ How well does it work? I wrote 121 cases while building, then 57 more afterwards
 
 ## What I'd do differently, and what's next
 
-I would write the parser's case table before the parser, not after; batch A drifted toward what the code already did. I would also build the stock-in flow ("bought" on the market list should add to stock). The roadmap: a Daraja callback to settle deni automatically, "reorder my last basket", per-customer prices, and a Playwright smoke test in CI. I would test the parser on real, anonymised messages with the owner's consent before believing any accuracy figure.
+I would write the parser's case table before the parser, not after; batch A drifted toward what the code already did. I would also build the stock-in flow ("bought" on the market list should add to stock). The roadmap: receive the gateway's signed webhook instead of polling it, "reorder my last basket", per-customer prices, and a Playwright smoke test in CI. I would test the parser on real, anonymised messages with the owner's consent before believing any accuracy figure.
 
 ## Status
 
-Portfolio build, runs locally with synthetic data (the shop, customers and phone numbers are made up). 441 PHPUnit tests pass on PHP 8.3 and 8.4, PHPStan level 8 is clean, and CI runs both. Not verified or not built: coverage percentage, any real WhatsApp or M-Pesa traffic, behaviour behind a reverse proxy, and any real user.
+Portfolio build, runs locally with synthetic data (the shop, customers and phone numbers are made up). 530 PHPUnit tests pass on PHP 8.3 and 8.4, PHPStan level 8 is clean, and CI runs both. Not verified or not built: coverage percentage, any real WhatsApp traffic, any run against a live Safaricom account (the gateway has only been observed against Safaricom's sandbox, with two KES 1 payments), behaviour behind a reverse proxy, and any real user.

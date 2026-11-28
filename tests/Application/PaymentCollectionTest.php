@@ -409,6 +409,19 @@ final class PaymentCollectionTest extends TestCase
         $this->sent(100); // a fresh request is allowed
     }
 
+    public function testARequestTheGatewayNeverAcceptedCanBeAbandonedButASentOneCannot(): void
+    {
+        $unsent = $this->collect->open($this->customer, 100);
+        $abandoned = $this->collect->abandon((int) $unsent->id, 'Not sent from this browser.');
+        self::assertSame('failed', $abandoned->display()['state']);
+        self::assertSame([], $this->gateway->creates);
+
+        $sent = $this->sent(100);
+        $this->expectException(ValidationException::class);
+        $this->expectExceptionMessage('was sent');
+        $this->collect->abandon((int) $sent->id, 'x');
+    }
+
     public function testRateLimitingKeepsTheRequestAndTellsTheOwnerHowLong(): void
     {
         $this->gateway->failNextCreate = new GatewayException(GatewayException::RATE_LIMITED, 'slow down', 45);
